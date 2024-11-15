@@ -1,10 +1,18 @@
 import { isNil, extend, each, includes, map, sortBy, toString } from "lodash";
 import chooseTextColorForBackground from "@/lib/chooseTextColorForBackground";
-import { ColorPaletteArray } from "@/visualizations/ColorPalette";
+import { AllColorPaletteArrays, ColorPaletteTypes } from "@/visualizations/ColorPalette";
 import { cleanNumber, normalizeValue, getSeriesAxis } from "./utils";
 
-function getSeriesColor(seriesOptions: any, seriesIndex: any) {
-  return seriesOptions.color || ColorPaletteArray[seriesIndex % ColorPaletteArray.length];
+function getSeriesColor(options: any, seriesOptions: any, seriesIndex: any, numSeries: any) {
+  // @ts-expect-error ts-migrate(7053) FIXME: Element implicitly has an 'any' type because expre... Remove this comment to see the full error message
+  let palette = AllColorPaletteArrays[options.color_scheme];
+  // @ts-expect-error ts-migrate(7053) FIXME: Element implicitly has an 'any' type because expre... Remove this comment to see the full error message
+  if (ColorPaletteTypes[options.color_scheme] === 'continuous' && palette.length > numSeries) {
+    const step = (palette.length - 1) / (numSeries - 1 || 1);
+    const index = Math.round(step * seriesIndex);
+    return seriesOptions.color || palette[index % palette.length];
+  }
+  return seriesOptions.color || palette[seriesIndex % palette.length];
 }
 
 function getHoverInfoPattern(options: any) {
@@ -71,11 +79,11 @@ function prepareBoxSeries(series: any, options: any, { seriesColor }: any) {
   return series;
 }
 
-function prepareSeries(series: any, options: any, additionalOptions: any) {
+function prepareSeries(series: any, options: any, numSeries: any, additionalOptions: any) {
   const { hoverInfoPattern, index } = additionalOptions;
 
   const seriesOptions = extend({ type: options.globalSeriesType, yAxis: 0 }, options.seriesOptions[series.name]);
-  const seriesColor = getSeriesColor(seriesOptions, index);
+  const seriesColor = getSeriesColor(options, seriesOptions, index, numSeries);
   const seriesYAxis = getSeriesAxis(series, options);
 
   // Sort by x - `Map` preserves order of items
@@ -92,9 +100,7 @@ function prepareSeries(series: any, options: any, additionalOptions: any) {
 
   const sourceData = new Map();
 
-  //we hold the labels and values in a dictionary so that we can aggregate multiple values for a single label
-  //once we reach the end of the data, we'll convert the dictionary to separate arrays for labels and values
-  const labelsValuesDict: { [key: string]: any } = {};
+  const labelsValuesMap = new Map();
 
   const yErrorValues: any = [];
   each(data, row => {
@@ -102,13 +108,12 @@ function prepareSeries(series: any, options: any, additionalOptions: any) {
     const y = cleanYValue(row.y, seriesYAxis === "y2" ? options.yAxis[1].type : options.yAxis[0].type); // depends on series type!
     const yError = cleanNumber(row.yError); // always number
     const size = cleanNumber(row.size); // always number
-    if (x in labelsValuesDict){
-      labelsValuesDict[x] += y;
+    if (labelsValuesMap.has(x)) {
+      labelsValuesMap.set(x, labelsValuesMap.get(x) + y);
+    } else {
+      labelsValuesMap.set(x, y);
     }
-    else{
-      labelsValuesDict[x] = y;
-    }
-    const aggregatedY = labelsValuesDict[x];
+    const aggregatedY = labelsValuesMap.get(x);
 
     sourceData.set(x, {
       x,
@@ -121,8 +126,8 @@ function prepareSeries(series: any, options: any, additionalOptions: any) {
     yErrorValues.push(yError);
   });
 
-  const xValues = Object.keys(labelsValuesDict);
-  const yValues = Object.values(labelsValuesDict);
+  const xValues = Array.from(labelsValuesMap.keys());
+  const yValues = Array.from(labelsValuesMap.values());
 
   const plotlySeries = {
     visible: true,
@@ -169,6 +174,7 @@ export default function prepareDefaultData(seriesList: any, options: any) {
   const additionalOptions = {
     hoverInfoPattern: getHoverInfoPattern(options),
   };
+  const numSeries = seriesList.length
 
-  return map(seriesList, (series, index) => prepareSeries(series, options, { ...additionalOptions, index }));
+  return map(seriesList, (series, index) => prepareSeries(series, options, numSeries, { ...additionalOptions, index }));
 }
